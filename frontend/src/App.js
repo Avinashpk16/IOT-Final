@@ -31,7 +31,7 @@ const MAX_HISTORY = 60;
 
 function App() {
   const [sensor, setSensor] = useState({ ax: 0, ay: 0, az: 0, mag: 0 });
-  const [gps, setGps] = useState({ lat: 0, lng: 0 });
+  const [gps, setGps] = useState({ lat: 29, lng: 77 });
   const [gpsPath, setGpsPath] = useState([]);
 
   const [events, setEvents] = useState([]);
@@ -48,7 +48,8 @@ function App() {
 
   const [filter, setFilter] = useState("all");
 
-  const mapRef = useRef(null);
+  const mapRef = useRef(null);          // history map
+  const liveMapRef = useRef(null);      // live map
   const heatLayerRef = useRef(null);
 
   const [timeOffset, setTimeOffset] = useState(null);
@@ -78,8 +79,18 @@ function App() {
       });
 
       if (d.gpsValid) {
+        const newPos = [d.lat, d.lng];
+
         setGps({ lat: d.lat, lng: d.lng });
-        setGpsPath(prev => [...prev, [d.lat, d.lng]].slice(-200));
+        setGpsPath(prev => [...prev, newPos].slice(-200));
+
+        // 🔥 FORCE MAP UPDATE
+        if (liveMapRef.current) {
+          liveMapRef.current.setView(newPos, 15);
+        }
+      }
+      if (liveMapRef.current && d.gpsValid) {
+        liveMapRef.current.setView([d.lat, d.lng]);
       }
     });
   }, []);
@@ -103,8 +114,15 @@ function App() {
           }
         }
 
+        // 🔥 DUPLICATE CHECK
+        const isDuplicate = prev.some(e =>
+          e.ts === ev.ts && e.type === ev.type
+        );
+
+        if (isDuplicate) return prev;
+
         return [
-          { ...ev, id: Date.now() },
+          { ...ev, id: ev.ts + ev.type }, // stable id
           ...prev
         ].slice(0, 20);
       });
@@ -271,25 +289,65 @@ function App() {
         <Line data={chartData} />
       </div>
 
-      {/* MAP */}
-      <div style={{ ...card, marginBottom: "1rem" }}>
-        <MapContainer
-          center={[gps.lat || 0, gps.lng || 0]}
-          zoom={15}
-          style={{ height: 320 }}
-          whenCreated={(map) => (mapRef.current = map)}
-        >
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      {/* MAPS */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "1rem",
+          marginBottom: "1rem"
+        }}>
 
-          {gpsPath.length > 0 && (
-            <Polyline positions={gpsPath} color="#38bdf8" />
-          )}
+          {/* LIVE MAP */}
+          <div style={card}>
+            <h3 style={{ marginBottom: "0.5rem" }}>📍 Live Location</h3>
 
-          <Marker position={[gps.lat, gps.lng]}>
-            <Popup>Current Location</Popup>
-          </Marker>
-        </MapContainer>
-      </div>
+            <MapContainer
+              center={[gps.lat || 0, gps.lng || 0]}
+              zoom={5}
+              style={{ height: 300 }}
+              whenCreated={(map) => (liveMapRef.current = map)}
+            >
+              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+
+              {gpsPath.length > 0 && (
+                <Polyline positions={gpsPath} color="#38bdf8" />
+              )}
+
+              <Marker position={[gps.lat, gps.lng]}>
+                <Popup>Current Live Location</Popup>
+              </Marker>
+            </MapContainer>
+          </div>
+
+          {/* EVENT HISTORY MAP */}
+          <div style={card}>
+            <h3 style={{ marginBottom: "0.5rem" }}>🔥 Event History</h3>
+
+            <MapContainer
+              center={[gps.lat || 0, gps.lng || 0]}
+              zoom={5}
+              style={{ height: 300 }}
+              whenCreated={(map) => (mapRef.current = map)}
+            >
+              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+
+              {/* Event markers */}
+              {eventHistory.map((ev, i) => {
+                if (!ev.lat || !ev.lng) return null;
+
+                return (
+                  <Marker key={i} position={[ev.lat, ev.lng]}>
+                    <Popup>
+                      <strong>{ev.type}</strong><br />
+                      {getEventTime(ev.ts)}
+                    </Popup>
+                  </Marker>
+                );
+              })}
+            </MapContainer>
+          </div>
+
+        </div>
 
       {/* EVENTS */}
       <div style={card}>
