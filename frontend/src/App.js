@@ -28,15 +28,19 @@ ChartJS.register(
 );
 
 const MAX_HISTORY = 60;
+const SPEED_LIMIT = 10; // km/h (change as needed)
 
 function App() {
   const [sensor, setSensor] = useState({ ax: 0, ay: 0, az: 0, mag: 0 });
-  const [gps, setGps] = useState({ lat: 29, lng: 77 });
+  const [gps, setGps] = useState({ lat: 29, lng: 77, speed:0 });
   const [gpsPath, setGpsPath] = useState([]);
-
   const [events, setEvents] = useState([]);
   const [eventHistory, setEventHistory] = useState([]);
-
+  const [trip, setTrip] = useState({
+    distance: 0,
+    maxSpeed: 0,
+    avgSpeed: 0
+  });
   const [analytics, setAnalytics] = useState({
     totalEvents: 0,
     collisions: 0
@@ -58,6 +62,20 @@ function App() {
   const normalizeType = (type) =>
     (type || "").toString().trim().toLowerCase();
 
+  const getDistance = (p1, p2) => {
+    const R = 6371; // km
+    const dLat = (p2[0] - p1[0]) * Math.PI / 180;
+    const dLng = (p2[1] - p1[1]) * Math.PI / 180;
+
+    const a =
+      Math.sin(dLat/2) ** 2 +
+      Math.cos(p1[0]*Math.PI/180) *
+      Math.cos(p2[0]*Math.PI/180) *
+      Math.sin(dLng/2) ** 2;
+
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  };
+
   // SENSOR
   useEffect(() => {
     const sensorRef = ref(db, "/sensor/latest");
@@ -67,6 +85,28 @@ function App() {
 
       const d = snap.val();
       setSensor(d);
+      if (d.speed && d.speed > SPEED_LIMIT) {
+        const ts = Date.now();
+
+        setEvents(prev => {
+          const id = ts + "overspeed";
+
+          const isDuplicate = prev.some(e => e.id === id);
+          if (isDuplicate) return prev;
+
+          return [
+            {
+              id,
+              type: "overspeed",
+              ts,
+              speed: d.speed,
+              lat: d.lat,
+              lng: d.lng
+            },
+            ...prev
+          ].slice(0, 20);
+        });
+      }
 
       setAccelHistory(prev => {
         const ts = new Date().toLocaleTimeString();
@@ -81,13 +121,33 @@ function App() {
       if (d.gpsValid) {
         const newPos = [d.lat, d.lng];
 
-        setGps({ lat: d.lat, lng: d.lng });
+        setGps({ lat: d.lat, lng: d.lng , speed: d.speed || 0});
         setGpsPath(prev => [...prev, newPos].slice(-200));
+        setTrip(prev => {
+          let newDistance = prev.distance;
 
-        // 🔥 FORCE MAP UPDATE
-        if (liveMapRef.current) {
-          liveMapRef.current.setView(newPos, 15);
-        }
+          if (gpsPath.length > 0) {
+            const last = gpsPath[gpsPath.length - 1];
+            const curr = [d.lat, d.lng];
+            newDistance += getDistance(last, curr);
+          }
+
+          const newMax = Math.max(prev.maxSpeed, d.speed || 0);
+
+          const totalPoints = gpsPath.length + 1;
+          const newAvg =
+            ((prev.avgSpeed * gpsPath.length) + (d.speed || 0)) / totalPoints;
+
+          return {
+            distance: newDistance,
+            maxSpeed: newMax,
+            avgSpeed: newAvg
+          };
+        });
+        // //   FORCE MAP UPDATE
+        // if (liveMapRef.current) {
+        //   liveMapRef.current.setView(newPos, 15);
+        // }
       }
       if (liveMapRef.current && d.gpsValid) {
         liveMapRef.current.setView([d.lat, d.lng]);
@@ -114,10 +174,8 @@ function App() {
           }
         }
 
-        // 🔥 DUPLICATE CHECK
-        const isDuplicate = prev.some(e =>
-          e.ts === ev.ts && e.type === ev.type
-        );
+        //   DUPLICATE CHECK
+        const isDuplicate = prev.some(e => e.id === (ev.ts + ev.type));
 
         if (isDuplicate) return prev;
 
@@ -221,7 +279,49 @@ function App() {
     rash: "#f97316",
     "rash drive": "#f97316",
     tow: "#eab308",
-    topple: "#8b5cf6"
+    topple: "#8b5cf6",
+    overspeed: "#06b6d4"
+  };
+
+  //   LIVE LOCATION ICON (green glow)
+  const liveIcon = L.divIcon({
+    className: "",
+    html: `
+      <div style="
+        width:16px;
+        height:16px;
+        background:#22c55e;
+        border-radius:50%;
+        border:3px solid white;
+        box-shadow:0 0 12px #22c55e;
+      "></div>
+    `
+  });
+
+  //  EVENT ICONS (color-based)
+  const getEventIcon = (type) => {
+    const colorMap = {
+      collision: "#ef4444",
+      tow: "#eab308",
+      topple: "#8b5cf6",
+      "rash drive": "#f97316"
+    };
+
+    const color = colorMap[type] || "#3b82f6";
+
+    return L.divIcon({
+      className: "",
+      html: `
+        <div style="
+          width:14px;
+          height:14px;
+          background:${color};
+          border-radius:50%;
+          border:2px solid white;
+          box-shadow:0 0 6px ${color};
+        "></div>
+      `
+    });
   };
 
   const card = {
@@ -241,7 +341,7 @@ function App() {
 
       {/* HEADER */}
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
-        <h1 style={{ color: "#38bdf8" }}>🚗 Vehicle Dashboard</h1>
+        <h1 style={{ color: "#38bdf8" }}>  Vehicle Dashboard</h1>
 
         <div style={{ display: "flex", gap: "1rem" }}>
           <div style={{ color: "#22c55e" }}>● Live</div>
@@ -263,6 +363,7 @@ function App() {
           { label: "AY", value: sensor.ay?.toFixed(2) },
           { label: "AZ", value: sensor.az?.toFixed(2) },
           { label: "|A|", value: sensor.mag?.toFixed(2) },
+          { label: "SPEED (km/h)", value: gps.speed?.toFixed(1) },
         ].map(({ label, value }) => (
           <div key={label} style={card}>
             <div style={{ opacity: 0.6 }}>{label}</div>
@@ -284,6 +385,24 @@ function App() {
         </div>
       </div>
 
+      {/* TRIP   */}
+        <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}>
+          <div style={{ ...card, flex: 1 }}>
+            <div>Distance (km)</div>
+            <div style={{ fontSize: 24 }}>{trip.distance.toFixed(2)}</div>
+          </div>
+
+          <div style={{ ...card, flex: 1 }}>
+            <div>Avg Speed</div>
+            <div style={{ fontSize: 24 }}>{trip.avgSpeed.toFixed(1)} km/h</div>
+          </div>
+
+          <div style={{ ...card, flex: 1 }}>
+            <div>Max Speed</div>
+            <div style={{ fontSize: 24 }}>{trip.maxSpeed.toFixed(1)} km/h</div>
+          </div>
+        </div>
+
       {/* CHART */}
       <div style={{ ...card, marginBottom: "1rem" }}>
         <Line data={chartData} />
@@ -299,7 +418,7 @@ function App() {
 
           {/* LIVE MAP */}
           <div style={card}>
-            <h3 style={{ marginBottom: "0.5rem" }}>📍 Live Location</h3>
+            <h3 style={{ marginBottom: "0.5rem" }}> Live Location</h3>
 
             <MapContainer
               center={[gps.lat || 0, gps.lng || 0]}
@@ -313,15 +432,19 @@ function App() {
                 <Polyline positions={gpsPath} color="#38bdf8" />
               )}
 
-              <Marker position={[gps.lat, gps.lng]}>
-                <Popup>Current Live Location</Popup>
-              </Marker>
+    
+
+              {gps.lat !== 0 && gps.lng !== 0 && (
+                <Marker position={[gps.lat, gps.lng]} icon={liveIcon}>
+                  <Popup>  Live Vehicle</Popup>
+                </Marker>
+              )}
             </MapContainer>
           </div>
 
           {/* EVENT HISTORY MAP */}
           <div style={card}>
-            <h3 style={{ marginBottom: "0.5rem" }}>🔥 Event History</h3>
+            <h3 style={{ marginBottom: "0.5rem" }}>Event History</h3>
 
             <MapContainer
               center={[gps.lat || 0, gps.lng || 0]}
@@ -336,7 +459,11 @@ function App() {
                 if (!ev.lat || !ev.lng) return null;
 
                 return (
-                  <Marker key={i} position={[ev.lat, ev.lng]}>
+                  <Marker
+                    key={i}
+                    position={[ev.lat, ev.lng]}
+                    icon={getEventIcon(normalizeType(ev.type))}
+                  >
                     <Popup>
                       <strong>{ev.type}</strong><br />
                       {getEventTime(ev.ts)}
@@ -364,6 +491,7 @@ function App() {
             <option value="rash drive">Rash Drive</option>
             <option value="tow">Tow</option>
             <option value="topple">Topple</option>
+            <option value="overspeed">Overspeed</option>
           </select>
         </div>
 

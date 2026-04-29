@@ -58,7 +58,7 @@ float ax, ay, az, mag;
 float pax, pay;
 float paz;
 
-float gpsLat = 0, gpsLng = 0;
+float gpsLat = 0, gpsLng = 0, gpsSpd = 0;
 bool gpsValid = false;
 
 unsigned long lastSample = 0;
@@ -118,6 +118,7 @@ void readGPS() {
   if (gps.location.isValid()) {
     gpsLat = gps.location.lat();
     gpsLng = gps.location.lng();
+    gpsSpd = gps.speed.kmph();
     gpsValid = true;
   }
 }
@@ -170,6 +171,8 @@ void pushData(const char* type) {
   json.set("mag", mag);
   json.set("lat", gpsLat);
   json.set("lng", gpsLng);
+  json.set("speed", gpsSpd);
+
   json.set("ts", millis());
 
   // latest
@@ -261,6 +264,7 @@ void loop() {
     sensor.set("mag", mag);
     sensor.set("lat", gpsLat);
     sensor.set("lng", gpsLng);
+    sensor.set("speed", gpsSpd);
     sensor.set("gpsValid", gpsValid);
 
     Firebase.setJSON(fbdo, "/sensor/latest", sensor);
