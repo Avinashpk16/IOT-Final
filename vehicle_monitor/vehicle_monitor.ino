@@ -140,24 +140,16 @@ bool detectTopple() {
 
 bool detectTow() {
   mag = magnitude(ax, ay, az);
-  magBuffer[idx] = mag;
-  idx = (idx + 1) % 30;
-  if (idx == 0) full = true;
 
-  if (!full) return false;
+  static float avgMag = 0;
+  avgMag = 0.9 * avgMag + 0.1 * mag; // smoothing
 
-  float mean = 0;
-  for (int i = 0; i < 30; i++) mean += magBuffer[i];
-  mean /= 30;
+  float diff = abs(mag - avgMag);
 
-  float var = 0;
-  for (int i = 0; i < 30; i++) {
-    float d = magBuffer[i] - mean;
-    var += d * d;
-  }
-  var /= 30;
+  bool stable = diff < 0.15;
+  bool notNormal = abs(avgMag - GRAVITY) > 0.5;
 
-  return (var < 0.05 && abs(mean - GRAVITY) > 0.5);
+  return (stable && notNormal);
 }
 
 // ───────── FIREBASE PUSH ─────────

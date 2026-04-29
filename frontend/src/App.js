@@ -363,6 +363,8 @@ function App() {
           { label: "AY", value: sensor.ay?.toFixed(2) },
           { label: "AZ", value: sensor.az?.toFixed(2) },
           { label: "|A|", value: sensor.mag?.toFixed(2) },
+          { label: "LAT", value: gps.lat?.toFixed(5) },
+          { label: "LNG", value: gps.lng?.toFixed(5) },
           { label: "SPEED (km/h)", value: gps.speed?.toFixed(1) },
         ].map(({ label, value }) => (
           <div key={label} style={card}>
